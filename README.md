@@ -1,13 +1,9 @@
-<table>
-  <tr>
-    <td>
-      <img src="cmir.svg"
-    </td>
-    <td style="font-size: 30px; padding-left: 20px;">
-      <strong>CMIR - Cross Modality Image Registration</strong>
-    </td>
-  </tr>
-</table>
+
+<div style="display: flex; align-items: center;">
+  <img src="cmir.svg">
+  <span style="font-size: 30px;"><strong>CMIR - Cross Modality Image Registration</strong></span>
+</div>
+
 
 
 [![PyPI version](https://badge.fury.io/py/cmir.svg)](https://badge.fury.io/py/cmir)
