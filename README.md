@@ -1,8 +1,7 @@
 
-<div style="display: flex; align-items: center;">
-  <img src="cmir.svg">
-  <span style="font-size: 30px;"><strong>CMIR - Cross Modality Image Registration</strong></span>
-</div>
+
+<img src="cmir_banner.svg">
+
 
 
 

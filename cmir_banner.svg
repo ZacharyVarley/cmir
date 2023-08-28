@@ -1,0 +1,8 @@
+<svg height="200" width="600" xmlns="http://www.w3.org/2000/svg">
+  <rect x="00" y="00" rx="0" ry="0" width="600" height="200" fill="#ffffff"/>
+  <circle cx="100" cy="100" r="95" fill="#ef4b28"/>
+  <rect x="35" y="70" rx="10" ry="10" width="60" height="60" fill="#006AC9"/>
+  <path fill="#2F4858" d="M166 130V70L35 130z"/>
+  <circle cx="135" cy="100" r="29" fill="#2F9A00"/>
+  <text x="200" y="150" font-family="Cousine" fill="#000000" font-size="155px">CMIR</text>
+</svg>
