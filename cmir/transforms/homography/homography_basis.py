@@ -95,7 +95,7 @@ class HomographyBasisTransform(nn.Module):
     """
     def __init__(
         self,
-        w_translation: float = 10.0,
+        w_translation: float = 0.05,
         w_shear: float = 0.2,
         w_scale: float = 0.5,
         w_perspective: float = 0.001,
