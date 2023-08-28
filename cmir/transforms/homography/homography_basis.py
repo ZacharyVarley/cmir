@@ -6,6 +6,7 @@ updated during registration. The basis homographies are defined by the
 following parameters: translation, shear, scale, and perspective in x and y.
 """
 
+from typing import Sequence, Tuple
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -90,34 +91,34 @@ class HomographyBasisTransform(nn.Module):
             before the module is used.
 
     Returns:
-        A flow field of shape (1, H, W, 2) which can be used to warp an image.
+        A vector field of shape (B, H, W, 2) which can be used to warp image(s).
 
     """
     def __init__(
         self,
+        image_shape: Sequence[int],
         w_translation: float = 0.05,
         w_shear: float = 0.2,
         w_scale: float = 0.5,
         w_perspective: float = 0.001,
     ):
         super().__init__()
-
         homography_weights = torch.tensor(
             [w_translation, w_shear, w_scale, w_perspective], dtype=torch.float32
         )
         self.register_buffer("homography_weights", homography_weights)
 
-        self.basis_weights = nn.Parameter(torch.zeros(8, dtype=torch.float32)).reshape(
-            8, 1, 1, 1
-        )
+        self.batch_size, _, self.height, self.width = image_shape
 
-    def build_bases(self, height: int, width: int) -> None:
-        self.flow_bases = gen_flow_bases(height, width, self.homography_weights)
+        self.basis_weights = nn.Parameter(torch.zeros(int(8 * self.batch_size), dtype=torch.float32)).reshape(
+            self.batch_size, 8, 1, 1, 1
+        )
+        self.flow_bases = gen_flow_bases(self.height, self.width, self.homography_weights)[None]
 
     def forward(self, coordinates: Tensor) -> Tensor:
         # Apply the basis weights to the flow bases
+        print(self.flow_bases.shape, self.basis_weights.shape)
         weighted_bases = self.flow_bases * self.basis_weights
 
         # Use the flow field to move the coordinates
-        return coordinates + weighted_bases.sum(dim=0)
-    
+        return coordinates + weighted_bases.sum(dim=1)
