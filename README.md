@@ -1,12 +1,7 @@
 <table>
   <tr>
     <td>
-      <svg height="200" width="200" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="100" cy="100" r="95" fill="#ef4b28"/>
-        <rect x="35" y="70" rx="10" ry="10" width="60" height="60" fill="#006AC9"/>
-        <path fill="#2F4858" d="M166 130V70L35 130z"/>
-        <circle cx="135" cy="100" r="29" fill="#2F9A00"/>
-      </svg>
+      <img src="cmir.svg"
     </td>
     <td style="font-size: 30px; padding-left: 20px;">
       <strong>CMIR - Cross Modality Image Registration</strong>
@@ -28,15 +23,15 @@
 
 ## Introduction
 
-Cross Modality Image Registration (CMIR) is a PyTorch-based package for tackling multimodal registration problems that involve sets of images or spatial stacks of images. CMIR provides a set of tools which are focused on stack registration on the GPU using new algorithms. Other packages such as [MONAI](https://monai.io/) or [NITorch](https://github.com/balbasty/nitorch) are more suitable for non serial sectioning registration problems.
+Cross Modality Image Registration (CMIR) is a PyTorch-based package for tackling multimodal registration problems that involve sets of images or spatial stacks of images from serial sectioning experiments and beyond. CMIR provides a set of tools which are focused on stack registration on the GPU using new algorithms. Other packages such as [MONAI](https://monai.io/) or [NITorch](https://github.com/balbasty/nitorch) are more suitable for non serial sectioning registration problems.
 
 CMIR is designed to be:
 
 - **Easy to install**: PyTorch sole-dependency.
 - **Easy to use**: Pipeline based workflows.
-- **Easy to contribute**: Make your own torch.nn.Module to either compute metrics, deform pixel coordinates, or augment images.
-- **Fast**: GPU accelerated registration algorithms.
-- **Flexible**: PyTorch has increasing support for AMD GPUs and Apple Silicon. Using TorchScript for just-in-time (jit) compiled modules.
+- **Easy to contribute**: Include your own torch.nn.module layers.
+- **Fast**: GPU accelerated. TorchScript for just-in-time (jit) compilation.
+- **Flexible**: PyTorch has increasing support for AMD GPUs and Apple Silicon.
 
 ## Installation
 
