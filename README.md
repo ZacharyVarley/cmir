@@ -38,7 +38,6 @@ pip install cmir
 The package provides a set of evaluation metrics implemented in the `cmir.metrics` module:
 
 ```python
-
 import torch
 from cmir.metrics import PatchCCADense
 
@@ -52,3 +51,6 @@ metric = PatchCCADense([2, 5])
 
 # inter-image CCA between all 32**2 = 1024 patches
 metric(stack_reference, stack_moving) # (10, 1024, 3)
+```
+
+
