@@ -8,6 +8,16 @@ import torch
 import torch.nn as nn
 
 
+@torch.jit.script
+def _hard_indicators(x: torch.Tensor, n_levels: int) -> torch.Tensor:
+    """Helper function for HardLevels."""
+    B, C, H, W = x.shape
+    output = (x[:, :, None, :, :] * n_levels).byte() == torch.arange(
+        n_levels, dtype=torch.uint8, device=x.device
+    )[None, None, :, None, None]
+    return output.reshape(B, int(C * n_levels), H, W)
+
+
 class HardLevels(nn.Module):
     """Break image channel dimension into indicators with a hard binning.
     This is not differentiable. Use SoftLevels for a differentiable version.
@@ -26,21 +36,37 @@ class HardLevels(nn.Module):
         super().__init__()
 
         self.n_levels = n_levels
+        self.out_dtype = out_dtype
 
-        bin_centers = torch.linspace(0.5 / n_levels, 1.0 - (0.5 / n_levels), n_levels)
+        if n_levels > 255 or n_levels < 2:
+            raise ValueError("n_levels must be a positive integer from 2 to 255.")
+
+        bin_centers = torch.arange(n_levels, dtype=out_dtype)
         self.register_buffer("bin_centers", bin_centers)
 
-        self.out_dtype = out_dtype
 
     def forward(self, x):
         # input sanitization
         if x.ndim != 4:
             raise ValueError("Input must be 4D tensor.")
         B, C, H, W = x.shape
-        diff = (x[:, :, None, :, :] - self.bin_centers[None, None, :, None, None]).abs()
-        return (diff == diff.min(dim=2, keepdim=True).values).to(self.out_dtype).reshape(
-            B, int(C * self.n_levels), H, W
-        )
+        output = (x[:, :, None, : , :] * self.n_levels).byte() == self.bin_centers[None, None, :, None, None]
+        return output.reshape(B, int(C * self.n_levels), H, W).to(self.out_dtype)
+
+
+@torch.jit.script
+def _linear_bin_contributions(
+    x: torch.Tensor, bin_centers: torch.Tensor
+) -> torch.Tensor:
+    """Helper function for LinearLevels."""
+    B, C, H, W = x.shape
+    n_levels = bin_centers.shape[0]
+    diff = (x[:, :, None, :, :] - bin_centers[None, None, :, None, None]).abs()
+    center_scores = 1.0 - (diff * n_levels)
+    center_scores[center_scores < 0.0] = 0.0
+    return torch.nn.functional.normalize(center_scores, p=1.0, dim=2).reshape(
+        B, int(C * n_levels), H, W
+    )
 
 
 class LinearLevels(nn.Module):
@@ -56,7 +82,6 @@ class LinearLevels(nn.Module):
     def __init__(self, n_levels: int):
         super().__init__()
 
-        self.n_levels = n_levels
         bin_centers = torch.linspace(0.5 / n_levels, 1.0 - (0.5 / n_levels), n_levels)
         self.register_buffer("bin_centers", bin_centers)
 
@@ -64,32 +89,32 @@ class LinearLevels(nn.Module):
         # input sanitization
         if x.ndim != 4:
             raise ValueError("Input must be 4D tensor.")
-        B, C, H, W = x.shape
-        diff = (x[:, :, None, :, :] - self.bin_centers[None, None, :, None, None]).abs()
-        return torch.nn.functional.normalize(diff, p=1, dim=2).reshape(
-            B, int(C * self.n_levels), H, W
-        )
-    
+        return _linear_bin_contributions(x, self.bin_centers)
+
+
+
+
 
 class GaussianLevels(nn.Module):
-    """Break image channel dimension into indicators with a Gaussian probability 
+    """Break image channel dimension into indicators with a Gaussian probability
     as is done with Kernel Density Estimation with the Parzen-Rosenblatt window method
 
-    https://en.wikipedia.org/wiki/Kernel_density_estimation 
+    https://en.wikipedia.org/wiki/Kernel_density_estimation
 
     Args:
         n_levels (int): Number of levels to break each channel into.
-        sigma (float): Standard deviation of Gaussian distribution. By default it is 
+        sigma (float): Standard deviation of Gaussian distribution. By default it is
             Silverman's rule of thumb for Gaussian KDE, given h = 1.06 * sigma_hat * n^(-1/5)
             where n is n_levels, and sigma_hat is arbitrarily set to 0.4 here so it is not
             recalcuated every time the module is called.
 
     """
 
-    def __init__(self, 
-                 n_levels: int,
-                 parzen_h: Optional[float] = None,
-                 ):
+    def __init__(
+        self,
+        n_levels: int,
+        parzen_h: Optional[float] = None,
+    ):
         super().__init__()
 
         self.n_levels = n_levels
@@ -98,7 +123,7 @@ class GaussianLevels(nn.Module):
         self.register_buffer("bin_centers", bin_centers)
 
         if parzen_h is None:
-            self.h = 0.4 * (n_levels**(-0.2))
+            self.h = 0.4 * (n_levels ** (-0.2))
         else:
             self.h = parzen_h
 
@@ -108,11 +133,9 @@ class GaussianLevels(nn.Module):
             raise ValueError("Input must be 4D tensor.")
         B, C, H, W = x.shape
         diff = x[:, :, None, :, :] - self.bin_centers[None, None, :, None, None]
-        gaussian_ = torch.exp(-0.5 * (diff / self.h)**2)
-        normed_gaussian = torch.nn.functional.normalize(gaussian_, p=1, dim=2)
-        return normed_gaussian.reshape(
-            B, int(C * self.n_levels), H, W
-        )
+        gaussian_ = torch.exp(-0.5 * (diff / self.h) ** 2)
+        normed_gaussian = torch.nn.functional.normalize(gaussian_, p=1.0, dim=2)
+        return normed_gaussian.reshape(B, int(C * self.n_levels), H, W)
 
 
 class GumbelLevels(nn.Module):
