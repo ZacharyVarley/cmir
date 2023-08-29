@@ -1,4 +1,4 @@
-<img src="cmir_banner.svg">
+<img src="cmir_banner.png">
 
 [![PyPI version](https://badge.fury.io/py/cmir.svg)](https://badge.fury.io/py/cmir)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/cmir)](https://pypi.org/project/cmir/)

@@ -10,15 +10,12 @@ https://github.com/VincentStimper/mclahe
 
 That codebase is also MIT licensed.
 
-To achieve this in 3D we leverage another MIT licensed codebase:
-
-https://github.com/f-dangel/unfoldNd
-
-
 """
 
 import math
+from typing import List, Optional, Union
 import torch
+from cmir.warps.splines.api import grid_pull
 
 
 @torch.jit.script
@@ -53,12 +50,15 @@ def batch_pdf_2D_input(x: torch.Tensor,
     return pdf
 
 
+
+
+# @torch.jit.script
 def mclahe(x: torch.Tensor,
            n_clahe_dims: int,
            clip_limit: float,
            n_bins: int,
-           bandwidth: float = 0.001,
-           tile_counts: list = None):
+           tile_counts: Optional[List[int]] = None,
+           bandwidth: float = 0.001,) -> torch.Tensor:
     """
     Multidimensional Contrast Limited Adaptive Histogram Equalization.
 
@@ -91,12 +91,16 @@ def mclahe(x: torch.Tensor,
         tile_counts = [8 for _ in range(n_clahe_dims)]
 
     # pad the input to be divisible by the tile counts in each dimension
-    paddings = []
+    paddings = torch.zeros((2 * n_clahe_dims,), dtype=torch.int64)
     for i in range(n_clahe_dims):
         if clahe_shape[i] % tile_counts[i] != 0:
-            paddings += (tile_counts[i] - (clahe_shape[i] % tile_counts[i]), 0,)
+            paddings[2*i + 0] = tile_counts[i] - (clahe_shape[i] % tile_counts[i])
+            paddings[2*i + 1] = 0
         else:
-            paddings += (0, 0,)
+            paddings[2*i + 0] = 0
+            paddings[2*i + 1] = 0
+    
+    paddings: List[int] = paddings.tolist()
 
     # paddings must be reversed for torch.nn.functional.pad as it accepts last dimension to first
     if n_clahe_dims == 2 or n_clahe_dims == 3:
@@ -112,10 +116,31 @@ def mclahe(x: torch.Tensor,
         )
     print(x_padded.shape)
 
-    # calculate the tile dimensions, pixels per tile, number of tiles, and tile centers
-    tile_centers = [torch.linspace(0.5 / tile_counts[-i], 1 - (0.5 / tile_counts[-i]), tile_counts[-i], device=x.device) for 
-                    i in range(1, n_clahe_dims + 1)][::-1]
-    tile_dims = [int(math.ceil(x_padded.shape[-i] / tile_counts[-i])) for i in range(1, n_clahe_dims + 1)][::-1]
+    # # calculate the tile dimensions, pixels per tile, number of tiles, and tile centers
+    # tile_centers = [torch.linspace(0.5 / tile_counts[-i], 1 - (0.5 / tile_counts[-i]), tile_counts[-i], device=x.device) for 
+    #                 i in range(1, n_clahe_dims + 1)][::-1]
+    # tile_dims = [int(math.ceil(x_padded.shape[-i] / tile_counts[-i])) for i in range(1, n_clahe_dims + 1)][::-1]
+    # voxels_per_tile = int(torch.prod(torch.tensor(tile_dims)).item())
+    # n_tiles = int(torch.prod(torch.tensor(tile_counts)).item())
+
+    tile_centers: List[torch.Tensor] = []
+    for i in range(1, n_clahe_dims + 1):
+        tile_center = torch.linspace(0.5 / tile_counts[-i], 1 - (0.5 / tile_counts[-i]), tile_counts[-i], device=x.device)
+        tile_centers.append(tile_center)
+    tile_centers.reverse()
+
+    # perform the interpolation using a meshgrid of all of the coordinates
+    # first, make the meshgrid with all coordinates, not just the tile centers
+    coords = torch.meshgrid(*[torch.linspace(0, 1, x_padded.shape[-i], device=x.device) for
+                                   i in range(1, n_clahe_dims + 1)][::-1], indexing='ij')
+    coords = torch.stack(coords, dim=-1)
+
+    tile_dims: List[int] = []
+    for i in range(1, n_clahe_dims + 1):
+        tile_dim = int(math.ceil(x_padded.shape[-i] / tile_counts[-i]))
+        tile_dims.append(tile_dim)
+    tile_dims.reverse()
+
     voxels_per_tile = int(torch.prod(torch.tensor(tile_dims)).item())
     n_tiles = int(torch.prod(torch.tensor(tile_counts)).item())
 
@@ -149,6 +174,7 @@ def mclahe(x: torch.Tensor,
         tiles = tiles.reshape((B, C, n_tiles, voxels_per_tile))
 
     print("Final tiles shape: ", tiles.shape)
+
         
     # make the bin centers
     bins = torch.linspace(0.5 / n_bins, 1 - (0.5 / n_bins), n_bins, device=x.device)
@@ -183,26 +209,63 @@ def mclahe(x: torch.Tensor,
     # calculate the cdf
     cdf = torch.cumsum(pdf, dim=-1)
 
-    # use grid_sample to interpolate the cdf's at the tile centers
+    # use bilinear or trilinear interpolattion with cdf's at the tile centers
     # first, reshape the tile centers to be (B, C, n_tiles, n_clahe_dims)
     # this will require meshgrid with indexing='ij'
     tile_centers = torch.meshgrid(*tile_centers, indexing='ij')
     tile_centers = torch.stack(tile_centers, dim=-1)
-    tile_centers = tile_centers.reshape((1, 1, n_tiles, n_clahe_dims))
 
-    # now tile_centers is (1, 1, n_tiles, n_clahe_dims)
-    # and cdf is (B, C, n_tiles, n_bins)
+    # use grid_pull from cmir.warps.splines.api to perform the interpolation
+    # first, reshape the cdf to be (B, C, n_tiles, n_bins, n_clahe_dims)
+    cdf = cdf.reshape(B, C, *tile_counts, n_bins,).transpose(-1, 2)
+    print("cdf shape", cdf.shape)
 
+    # out_coords = out_coords.reshape((1, *(out_coords.shape))).expand((1, *(out_coords.shape)))
+    # the bin dimension will also be linearly interpolated so prepend the original
+    # pixel values to the out_coords as this are used to index into the cdf dimension
+    # for i in range(C):
     
-    print(pdf.shape)
+    out = []
+    for b in range(B):
+        for i in range(C):
+            coords_per_channel = torch.cat([x_padded[b, i][..., None], coords], dim=-1)
+            out.append(grid_pull(cdf[b, i], coords_per_channel, interpolation='linear'))
+    out = torch.stack(out, dim=0).reshape((B, C, *x_padded.shape[-n_clahe_dims:]))
+    
+    # slice the output to cut it from padded shape to original input shape
+    if n_clahe_dims == 2:
+        out = out[:, :, :x.shape[-2], :x.shape[-1]]
+    elif n_clahe_dims == 3:
+        out = out[:, :, :x.shape[-3], :x.shape[-2], :x.shape[-1]]
+    else:
+        out = out[:, :, :x.shape[-4], :x.shape[-3], :x.shape[-2], :x.shape[-1]]
 
-
+    print("Final out shape", out.shape)
+    return out
 
 
 
 # test mclahe
-x = torch.randn(1, 3, 100, 100, 100)
+x = torch.randn(2, 3, 100, 128)
+n_clahe = 2
+clip_limit = 0.2
+nbins = 16
+out = mclahe(x, n_clahe_dims=n_clahe, clip_limit=clip_limit, n_bins=nbins)
+
+print("-"*80)
+
+# test mclahe
+x = torch.randn(2, 3, 45, 29, 31)
 n_clahe = 3
-clip_limit = 0.01
-nbins = 64
+clip_limit = 0.2
+nbins = 16
+out = mclahe(x, n_clahe_dims=n_clahe, clip_limit=clip_limit, n_bins=nbins)
+
+print("-"*80)
+
+# test mclahe
+x = torch.randn(2, 3, 20, 20, 20, 20)
+n_clahe = 4
+clip_limit = 0.2
+nbins = 16
 out = mclahe(x, n_clahe_dims=n_clahe, clip_limit=clip_limit, n_bins=nbins)

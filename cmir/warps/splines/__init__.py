@@ -2,7 +2,7 @@
 
 
 __all__ = [
-    "BSplineTransform"
+    "BSplineWarp",
     "grid_pull", 
     "grid_push", 
     "grid_count", 
