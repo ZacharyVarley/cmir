@@ -13,7 +13,7 @@
 
 ## Introduction
 
-Cross Modality Image Registration (CMIR) is a PyTorch-based package for tackling multimodal registration problems that involve sets of images or spatial stacks of images from serial sectioning experiments and beyond. CMIR provides a set of tools which are focused on stack registration on the GPU using new algorithms. Other packages such as [MONAI](https://monai.io/) or [NITorch](https://github.com/balbasty/nitorch) are more suitable for non serial sectioning registration problems.
+Cross Modality Image Registration (CMIR) is a PyTorch-based package for tackling multimodal registration problems that involve sets of image pairs or groups of spatial stacks of images from serial sectioning experiments and beyond. CMIR provides a set of tools which are focused on stack registration on the GPU using new algorithms. Other packages such as [MONAI](https://monai.io/) or [NITorch](https://github.com/balbasty/nitorch) are more suitable for non serial sectioning registration problems.
 
 CMIR is designed to be:
 

@@ -1,4 +1,4 @@
-"""Tools for transforming and warping image pixel coordinates."""
+"""Tools for warping image pixel coordinates to register images."""
 
 
 __all__ = [
