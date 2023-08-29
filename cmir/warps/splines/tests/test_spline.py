@@ -1,17 +1,17 @@
 """
-Tests for the BSplineTransform class.
+Tests for the BSplineWarp class.
 """
 
 import torch
 import pytest
 
-from cmir.transforms.splines.bspline import BSplineTransform
+from cmir.warps.splines.bspline import BSplineWarp
 
 
 @pytest.fixture
 def bspline_instance():
     # Create a model instance
-    model = BSplineTransform(image_shape=(32, 32), 
+    model = BSplineWarp(image_shape=(32, 32), 
                              control_shape=(6, 6),
                              bound="dct2",
                              interpolation="cubic")

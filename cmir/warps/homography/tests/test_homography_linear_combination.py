@@ -4,7 +4,7 @@ Tests for the HomographyBasisTransform transform.
 
 import pytest
 import torch
-from cmir.transforms.homography.homography_basis import HomographyBasisTransform
+from cmir.warps.homography.homography_basis import HomographyBasisTransform
 
 
 @pytest.fixture

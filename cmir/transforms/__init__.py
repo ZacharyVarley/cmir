@@ -1,14 +1,10 @@
-"""Tools for transforming and warping image pixel coordinates."""
+"""Tools for filtering and transforming individual images."""
 
 
 __all__ = [
-    "BSplineTransform"
-    "grid_pull", 
-    "grid_push", 
-    "grid_count", 
-    "grid_grad", 
-    "add_identity_grid_"
+    "levels",
 ]
+
 
 def __dir__():
     return sorted(__all__)
@@ -16,12 +12,7 @@ def __dir__():
 
 def __getattr__(name):
     _import_mapping = {
-        "BSplineWarp": "bspline",
-        "grid_pull": "api",
-        "grid_push": "api",
-        "grid_count": "api",
-        "grid_grad": "api",
-        "add_identity_grid_": "api",
+        "Levels": "levels",
     }
     if name in __all__:
         import importlib

@@ -17,12 +17,12 @@ from .api import grid_pull, identity_grid
 
 
 __all__ = [
-    "BSplineTransform"
+    "BSplineWarp"
 ]
 
 
-class BSplineTransform(torch.nn.Module):
-    """BSpline transform.
+class BSplineWarp(torch.nn.Module):
+    """BSpline coordinate warp.
 
     All image coordinates are assumed to be in the range ``[0, 1]``.
 
