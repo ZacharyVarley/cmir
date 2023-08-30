@@ -34,7 +34,7 @@ def make_spline(spline: List[int]) -> List[Spline]:
     return [Spline(s) for s in spline]
 
 
-# @torch.jit.script
+@torch.jit.script
 def grid_pull(inp, grid, bound: List[int], interpolation: List[int],
               extrapolate: int):
     """
