@@ -13,7 +13,7 @@ import torch
 from typing import Tuple
 
 from .jit_utils import movedim1
-from .api import grid_pull, identity_grid
+from .api import grid_pull, grid_push, identity_grid
 
 
 __all__ = [
@@ -22,7 +22,14 @@ __all__ = [
 
 
 class BSplineWarp(torch.nn.Module):
-    """BSpline coordinate warp.
+    """BSpline coordinate warp. 
+
+    This module modified input pixel coordinates to new locations.
+    
+    The nn.Parameter ``displacements`` is the focus of this module. 
+    It is a coarse grid of displacements that can be updated via 
+    gradient descent. The displacements are used in the forward pass 
+    to smoothly distort a dense grid of pixel coordinates to new locations. 
 
     All image coordinates are assumed to be in the range ``[0, 1]``.
 
@@ -32,7 +39,7 @@ class BSplineWarp(torch.nn.Module):
         Shape of the images for which the coordinates are defined
     control_points : Tuple[int, int]
         Number of control points along each dimension.
-    bound : BoundType or sequence[BoundType], default='dct2'
+    bound : BoundType or sequence[BoundType], default='zero'
         Boundary conditions.
     extrapolate : bool or int, default=False
         Extrapolate out-of-bound data.
@@ -42,45 +49,58 @@ class BSplineWarp(torch.nn.Module):
     """
 
     def __init__(
-        self, 
+        self,
+        n_transforms: int,
         image_shape: Tuple[int, int],
         control_shape: Tuple[int, int],
-        interpolation="linear", 
-        bound="zero", 
-        extrapolate=False
+        interpolation="cubic", 
+        bound="nearest", 
+        extrapolate=1,
     ):
         super().__init__()
-        self.image_shape = image_shape
-        self.control_shape = control_shape
         self.bound = bound
         self.extrapolate = extrapolate
         self.interpolation = interpolation
+        self.control_shape = control_shape
         
-        # make a coarse grid of control points
-        control_points = identity_grid(control_shape, dtype=torch.float32)
+        # make a coarse grid of displacements
+        self.displacements = torch.nn.Parameter(torch.zeros(n_transforms, 2, *control_shape))
 
-        # normalize to [0, 1]
-        control_points = control_points / (torch.tensor(control_shape, dtype=torch.float32) - 1)
-
-        # (..., H, W, 2) grid -> (..., 2, H, W) "image" of coeffs
-        control_points = movedim1(control_points, -1, -3)
-
-        # make a buffer self.control_points that follows the parent module device / type
-        self.register_buffer('control_points', control_points)
-
-        # displacements from the control points are the focus
-        self.displacements = torch.nn.Parameter(torch.zeros_like(control_points))
+        coordinate_grid = identity_grid(image_shape, torch.float32, self.displacements.device)
+        coordinate_grid = coordinate_grid.expand(n_transforms, *coordinate_grid.shape)
+        self.register_buffer("coordinate_grid", coordinate_grid)
 
     def forward(self, image_coordinates):
-        # "image" here is a coarse grid of values that indicate new pixel positions
-        # we pull this coarse image from a dense grid with all of the pixel coordinates
-        # each pixel in the image is 2 channel, on for each deformation dimension
-        # (..., 2, H, W) image and (..., H, W, 2) grid -> (..., 2, H, W) output
-        coordinate_image = grid_pull(self.control_points + self.displacements, 
-                                image_coordinates,
-                                interpolation=self.interpolation,
-                                bound=self.bound,
-                                extrapolate=self.extrapolate)
-        # (..., 2, H, W) output -> (..., H, W, 2) grid
-        return movedim1(coordinate_image, -3, -1)
+        displacements_upsampled = torch.nn.functional.interpolate(
+            self.displacements, 
+            size=image_coordinates.shape[-3:-1], 
+            mode='bicubic', 
+            align_corners=False
+        )
+        coodinate_deltas = grid_pull(
+            displacements_upsampled,
+            self.coordinate_grid,
+            bound=self.bound,
+            extrapolate=self.extrapolate,
+            interpolation=self.interpolation,
+        )
+        warped_coordinates = image_coordinates + movedim1(coodinate_deltas, -3, -1)
+        return warped_coordinates
     
+    def inverse(self, image_coordinates):
+        displacements_upsampled = torch.nn.functional.interpolate(
+            self.displacements, 
+            size=image_coordinates.shape[-3:-1], 
+            mode='bicubic', 
+            align_corners=False
+        )
+        coodinate_deltas = grid_push(
+            displacements_upsampled,
+            self.coordinate_grid,
+            bound=self.bound,
+            extrapolate=self.extrapolate,
+            interpolation=self.interpolation,
+        )
+        warped_coordinates = image_coordinates - movedim1(coodinate_deltas, -3, -1)
+        return warped_coordinates
+        
