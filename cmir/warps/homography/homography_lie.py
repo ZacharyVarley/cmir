@@ -30,7 +30,6 @@ ALLOWED_GROUPS = [
 ]  # projective transformation
 
 
-@torch.jit.script
 class LieAlgebraParameterization(nn.Module):
     """
     A module that parameterizes Lie group sl3 using its Lie algebra.
@@ -58,32 +57,33 @@ class LieAlgebraParameterization(nn.Module):
         NotImplementedError: If the given group is not one of the allowed values.
     """
 
-    def __init__(self, group: str, bias: Optional[torch.Tensor] = None):
+    def __init__(self, algebra: str, bias: Optional[torch.Tensor] = None):
         super(LieAlgebraParameterization, self).__init__()
-        self.group = group
 
-        if group == "so2":
+        self.algebra = algebra
+
+        if algebra == "so2":
             elements = torch.zeros((1, 3, 3))
             elements[0, 0, 1] = -1  # rotation
             elements[0, 1, 0] = 1  # rotation
-        elif group == "r2":
+        elif algebra == "r2":
             elements = torch.zeros((2, 3, 3))
             elements[0, 0, 2] = 1  # translation in x
             elements[1, 1, 2] = 1  # translation in y
-        elif group == "se2":
+        elif algebra == "se2":
             elements = torch.zeros((3, 3, 3))
             elements[0, 0, 2] = 1  # translation in x
             elements[1, 1, 2] = 1  # translation in y
             elements[2, 0, 1] = -1  # rotation
             elements[2, 1, 0] = 1  # rotation
-        elif group == "sim2":
+        elif algebra == "sim2":
             elements = torch.zeros((4, 3, 3))
             elements[0, 0, 2] = 1  # translation in x
             elements[1, 1, 2] = 1  # translation in y
             elements[2, 0, 1] = -1  # rotation
             elements[2, 1, 0] = 1  # rotation
             elements[3, 2, 2] = -1  # isotropic scaling
-        elif group == "as2":
+        elif algebra == "as2":
             # this is the shear-less affine group
             elements = torch.zeros((5, 3, 3))
             elements[0, 0, 2] = 1  # translation in x
@@ -94,7 +94,7 @@ class LieAlgebraParameterization(nn.Module):
             elements[3, 1, 1] = 1  # isotropic scaling
             elements[4, 0, 0] = 1  # stretching
             elements[4, 1, 1] = -1  # stretching
-        elif group == "aff2":
+        elif algebra == "aff2":
             elements = torch.zeros((6, 3, 3))
             elements[0, 0, 2] = 1  # translation in x
             elements[1, 1, 2] = 1  # translation in y
@@ -106,7 +106,7 @@ class LieAlgebraParameterization(nn.Module):
             elements[4, 1, 1] = -1  # stretching
             elements[5, 0, 1] = 1  # shear
             elements[5, 1, 0] = 1  # shear
-        elif group == "sl3":
+        elif algebra == "sl3":
             elements = torch.zeros((8, 3, 3))
             elements[0, 0, 2] = 1  # translation in x
             elements[1, 1, 2] = 1  # translation in y
@@ -127,7 +127,7 @@ class LieAlgebraParameterization(nn.Module):
             ] = 1  # projective keystone in y (I might have these swapped for x/y)
         else:
             raise NotImplementedError(
-                f"Group {group} not implemented. Allowed groups are {ALLOWED_GROUPS}"
+                f"Group {algebra} not implemented. Allowed groups are {ALLOWED_GROUPS}"
             )
 
         # set elements buffer (without grad attribute)
@@ -227,16 +227,24 @@ class HomographyLieTransform(nn.Module):
         NotImplementedError: If the given group is not one of the allowed values.
     """
 
-    def __init__(self, group: str, bias: Optional[torch.Tensor] = None):
+    def __init__(self, algebra: str, bias: Optional[torch.Tensor] = None):
         super(HomographyLieTransform, self).__init__()
-        self.group = group
-
         # create the lie algebra parameterization
-        self.lie_algebra = LieAlgebraParameterization(group, bias)
+        self.lie_algebra = LieAlgebraParameterization(algebra, bias)
 
     def __call__(self, image_coordinates: torch.Tensor):
         # get the homography
         homography = self.lie_algebra()
 
+        # apply the homography
+        return apply_homography(image_coordinates, homography)
+    
+    def inverse(self, image_coordinates: torch.Tensor):
+        # get the homography
+        homography = self.lie_algebra()
+        
+        # invert the homography
+        homography = torch.inverse(homography)
+        
         # apply the homography
         return apply_homography(image_coordinates, homography)
