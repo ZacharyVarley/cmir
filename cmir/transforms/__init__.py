@@ -3,6 +3,7 @@
 
 __all__ = [
     "levels",
+    "CLAHE"
 ]
 
 
@@ -13,6 +14,7 @@ def __dir__():
 def __getattr__(name):
     _import_mapping = {
         "Levels": "levels",
+        "CLAHE": "clahe"
     }
     if name in __all__:
         import importlib
