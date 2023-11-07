@@ -17,15 +17,15 @@ Cross Modality Image Registration (CMIR) is a PyTorch-based package for tackling
 
 CMIR is designed to be:
 
-- **Easy to install**: PyTorch sole-dependency.
+- **Easy to install**: PyTorch sole-dependency. Considering cmaes as 2nd dependency.
 - **Easy to use**: Pipeline based workflows.
 - **Easy to contribute**: Include your own torch.nn.module layers.
 - **Fast**: GPU accelerated. TorchScript for just-in-time (jit) compilation.
-- **Flexible**: PyTorch has increasing support for AMD GPUs and Apple Silicon.
+- **Flexible**: PyTorch has increasing support for AMD GPUs and Apple Silicon in addition to Nvidia
 
 ## Installation
 
-The package can be installed using pip:
+The package can (soon) be installed using pip:
 
 ```bash
 pip install cmir
