@@ -1,7 +1,7 @@
 __all__ = [
     "transforms",
     "metrics",
-    "solvers"
+    "pipelines"
 ]
 
 
@@ -11,7 +11,9 @@ def __dir__():
 
 def __getattr__(name):
     _import_mapping = {
-        "load": "io._io",
+        "transforms": "transforms",
+        "metrics": "metrics",
+        "pipelines": "pipelines"
     }
     if name in __all__:
         import importlib

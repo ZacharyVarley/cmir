@@ -6,8 +6,9 @@ authors = ["ZacharyVarley <zvarley@andrew.cmu.edu>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.6"
+python = "^3.7"
 torch = "^2.0"
+cmaes = "^0.10.0"
 
 [tool.poetry-dynamic-versioning]
 enable = true

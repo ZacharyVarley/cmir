@@ -50,6 +50,8 @@ def test_adjoint_displacements(bspline_instance):
     model = bspline_instance
     # remove grad to allow in-place modification of displacements
     model.requires_grad_(False)
+    # set seed
+    torch.manual_seed(0)
     # draw from Gaussian distribution for displacements
     model.displacements += torch.randn_like(model.displacements) * 4.0
     # test that the inverse of the forward is the identity
@@ -63,4 +65,4 @@ def test_adjoint_displacements(bspline_instance):
     warped_coordinates = model(image_coordinates)
     # unwarp the warped coordinates
     unwarped_coordinates = model.inverse(warped_coordinates)
-    assert torch.allclose(image_coordinates, unwarped_coordinates, atol=1e-5)
+    assert torch.allclose(image_coordinates, unwarped_coordinates, atol=1e-6)
