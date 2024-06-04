@@ -163,13 +163,10 @@ def clahe_2d_undiffable(
 
     # pdf is handled in "pixels" viewed as a large batch of 1D pdfs
     histos = (pdf * voxels_per_tile).view(-1, n_bins)
-
     if clip_limit > 0:
         # calc limit
         limit = max(clip_limit * voxels_per_tile // n_bins, 1)
-
         histos.clamp_(max=limit)
-
         # calculate the clipped pdf of shape (B, C, n_tiles, n_bins)
         clipped = voxels_per_tile - histos.sum(-1)
 
@@ -177,15 +174,12 @@ def clahe_2d_undiffable(
         residual = torch.remainder(clipped, n_bins)
         redist = (clipped - residual).div(n_bins)
         histos += redist[..., None]
-
         # trick to avoid using a loop to assign the residual
         v_range: torch.Tensor = torch.arange(n_bins, device=histos.device)
         mat_range: torch.Tensor = v_range.repeat(histos.shape[0], 1)
         histos += mat_range < residual[None].transpose(0, 1)
-
     # cdf (B, C, n_tiles, n_bins)
     cdfs = torch.cumsum(histos, dim=-1) * (n_bins - 1) / voxels_per_tile
-
     cdfs = cdfs.clamp(min=0.0, max=(n_bins - 1))
 
     # --------------- End from Kornia's implementation section ----------------

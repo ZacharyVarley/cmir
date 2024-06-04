@@ -1,8 +1,4 @@
-__all__ = [
-    "transforms",
-    "metrics",
-    "pipelines"
-]
+__all__ = ["metrics", "optimizers", "pipelines", "transforms", "warps"]
 
 
 def __dir__():
@@ -11,9 +7,11 @@ def __dir__():
 
 def __getattr__(name):
     _import_mapping = {
-        "transforms": "transforms",
         "metrics": "metrics",
-        "pipelines": "pipelines"
+        "optimizers": "optimizers",
+        "pipelines": "pipelines",
+        "transforms": "transforms",
+        "warps": "warps",
     }
     if name in __all__:
         import importlib

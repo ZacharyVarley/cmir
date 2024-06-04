@@ -1,10 +1,7 @@
 """Tools for warping image pixel coordinates to register images."""
 
 
-__all__ = [
-    "splines"
-    "homography"
-]
+__all__ = ["splines", "homography"]
 
 
 def __dir__():

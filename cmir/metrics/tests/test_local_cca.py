@@ -5,7 +5,13 @@ Tests for the PatchCCA module.
 import torch
 import pytest
 
-from cmir.metrics.patch_cca import PatchCCASparse, PatchCCADense, extract_patches, patch_cca_unfold, patch_cca_sparse
+from cmir.metrics.local_cca.patch_cca import (
+    PatchCCASparse,
+    PatchCCADense,
+    extract_patches,
+    patch_cca_unfold,
+    patch_cca_sparse,
+)
 
 
 @pytest.fixture
@@ -42,7 +48,7 @@ def test_patchccasparse_zeros(patchccasparse_instance):
 
 def test_patchccadense(patchccadense_instance):
     # Create a random input
-    x = torch.randn(2, 5, 32, 32) 
+    x = torch.randn(2, 5, 32, 32)
     y = (x[:, :4, :, :] + 0.01 * torch.randn(2, 4, 32, 32)) / 1.01
     cca_out = patchccadense_instance(x, y)
     assert cca_out.shape == (2, 1024, 3)
@@ -55,4 +61,6 @@ def test_extract_patches():
     patches = extract_patches(x, coords, patch_radius)
     assert patches.shape == (1, 1, 1, 9)
     print(patches)
-    assert torch.allclose(patches, torch.tensor([[1., 12., 23., 2., 13., 24., 3., 14., 25.]]))
+    assert torch.allclose(
+        patches, torch.tensor([[1.0, 12.0, 23.0, 2.0, 13.0, 24.0, 3.0, 14.0, 25.0]])
+    )

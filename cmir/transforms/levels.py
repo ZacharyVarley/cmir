@@ -44,14 +44,11 @@ class HardLevels(nn.Module):
         bin_centers = torch.arange(n_levels, dtype=out_dtype)
         self.register_buffer("bin_centers", bin_centers)
 
-
     def forward(self, x):
         # input sanitization
         if x.ndim != 4:
             raise ValueError("Input must be 4D tensor.")
-        B, C, H, W = x.shape
-        output = (x[:, :, None, : , :] * self.n_levels).byte() == self.bin_centers[None, None, :, None, None]
-        return output.reshape(B, int(C * self.n_levels), H, W).to(self.out_dtype)
+        return _hard_indicators(x, self.n_levels).to(self.out_dtype)
 
 
 @torch.jit.script
@@ -90,9 +87,6 @@ class LinearLevels(nn.Module):
         if x.ndim != 4:
             raise ValueError("Input must be 4D tensor.")
         return _linear_bin_contributions(x, self.bin_centers)
-
-
-
 
 
 class GaussianLevels(nn.Module):

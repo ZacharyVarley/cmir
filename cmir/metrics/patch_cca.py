@@ -1,49 +1,54 @@
-from typing import Optional
+from typing import Tuple
 import torch
+from torch import Tensor
 
-""" 
-This module contains an implementation of CCA carried out on patches of images.
-Each corresponding patch in the two images is treated as two collections of vectors
-each with dimension equal to the number of channels in the image. The CCA is then
-computed between the two collections of vectors. The value reported for the patch is
-the trace of the covariance matric over the minimum channel dimension between the 
-images. To oversimplify, the mean "r^2" value across correlates is reported. This
-module can carry out this computation over several patch sizes and then average those
-results.
-
-"""
 
 @torch.jit.script
-def batched_cca(x: torch.Tensor, y: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+def batch_cca(
+    x: Tensor,
+    y: Tensor,
+    cca_type: str = "cov",
+    std_threshold: float = 0.0001,
+    eps: float = 1e-4,
+) -> Tensor:
     """
     Computes the batched CCA between two matrices of
-    shape (..., n, m) and (..., n, m). n is the number of
+    shape (..., n, m1) and (..., n, m2). n is the number of
     data points and m is the dimension of the data points.
     The CCA is computed batch-wise on the last two dimensions.
 
     Args:
-        x (torch.Tensor): The first input matrix of shape (..., n, m).
-        y (torch.Tensor): The second input matrix of shape (..., n, m).
+        x (Tensor): The first input matrix of shape (..., n, m1).
+        y (Tensor): The second input matrix of shape (..., n, m2).
+        cca_type (str):The type of CCA to compute. Options are 'cov' and 'corr'. Defaults to 'cov'.
+            The 'cov' option computes the CCA using the covariance matrices. The 'corr' option
+            computes the CCA using the correlation matrices.
+        std_threshold (float, optional): A threshold on the standard deviation to prevent division
+            by zero. Defaults to 0.0001. If the standard deviation is less than this value, the
+            standard deviation is set to 1.
         eps (float, optional): A small value to add to the covariance matrices to
-            prevent singular matrices. Defaults to 1e-6.
+            prevent singular matrices. Defaults to 1e-4.
 
     Returns:
-        torch.Tensor: The batched CCA between the two input matrices.
+        Tensor: The mean-across channel CCA correlations of shape (...,)
 
-    Example:
-        >>> x = torch.randn(10, 100, 50)
-        >>> y = torch.randn(10, 100, 50)
-        >>> batched_cca(x, y).shape # (10,)
 
     The canonical correlation coefficients are the square roots of the eigenvalues of the
-    correlation matrix between the two sets of variables. The function returns the mean of 
+    correlation matrix between the two sets of variables. The function returns the mean of
     the first min(m_dim(x), m_dim(y)) absolute values of the correlations.
 
     """
 
     # Standardize the input matrices
-    x = (x - x.mean(dim=-2, keepdim=True)) / x.std(dim=-2, keepdim=True)
-    y = (y - y.mean(dim=-2, keepdim=True)) / y.std(dim=-2, keepdim=True)
+    x = x - x.mean(dim=-2, keepdim=True)
+    y = y - y.mean(dim=-2, keepdim=True)
+
+    # if type is correlation, normalize by the standard deviation
+    if cca_type == "corr":
+        x_std = x.std(dim=-2, keepdim=True)
+        y_std = y.std(dim=-2, keepdim=True)
+        x = x / torch.where(x_std < std_threshold, torch.ones_like(x_std), x_std)
+        y = y / torch.where(y_std < std_threshold, torch.ones_like(y_std), y_std)
 
     # Compute covariance matrices
     cov_xx = torch.matmul(x.transpose(-2, -1), x) / (x.shape[-2] - 1)
@@ -51,186 +56,182 @@ def batched_cca(x: torch.Tensor, y: torch.Tensor, eps: float = 1e-6) -> torch.Te
     cov_xy = torch.matmul(x.transpose(-2, -1), y) / (x.shape[-2] - 1)
 
     # Compute the inverse square root of cov_xx and cov_yy
-    inv_sqrt_xx = torch.linalg.inv(torch.linalg.cholesky(cov_xx + eps * torch.eye(cov_xx.shape[-1], device=x.device)))
-    inv_sqrt_yy = torch.linalg.inv(torch.linalg.cholesky(cov_yy + eps * torch.eye(cov_yy.shape[-1], device=y.device)))
+    inv_sqrt_xx = torch.linalg.inv(
+        torch.linalg.cholesky(
+            cov_xx + eps * torch.eye(cov_xx.shape[-1], device=x.device)
+        )
+    )
+    inv_sqrt_yy = torch.linalg.inv(
+        torch.linalg.cholesky(
+            cov_yy + eps * torch.eye(cov_yy.shape[-1], device=y.device), upper=True
+        )
+    )
 
     # Compute the canonical correlation matrix
-    corr_matrices = torch.matmul(torch.matmul(inv_sqrt_xx, cov_xy), inv_sqrt_yy)
+    cov_matrices = torch.matmul(torch.matmul(inv_sqrt_xx, cov_xy), inv_sqrt_yy)
 
     # return the trace over the max dimension (min rank)
-    return corr_matrices.diagonal(dim1=-2, dim2=-1).abs().sum(dim=-1) / min(
-        x.shape[-1], y.shape[-1]
-    )
+    return cov_matrices.diagonal(dim1=-2, dim2=-1).abs().mean(dim=-1)
 
 
 @torch.jit.script
-def patch_cca_unfold(
-    x: torch.Tensor,
-    y: torch.Tensor,
-    k: int,
-    stride: int,
-    padding: int,
-) -> torch.Tensor:
+def batch_cca_from_intermediates(
+    x_vals_normed: Tensor,
+    x_inv_sqrt: Tensor,
+    y_vals_normed: Tensor,
+    y_inv_sqrt: Tensor,
+) -> Tensor:
     """
-    Computes the patch-wise CCA between two image tensors
-    shaped (B, C, H, W). C dimension is treated as data entries
-    within each patch.
+    Computes the non-dense patch-wise CCA between two image tensors from intermediate
+    values computed by patch_offset_grid_cache.
 
     Args:
-        x (torch.Tensor): The first input images of shape (B, C, H, W).
-        y (torch.Tensor): The second input images of shape (B, C, H, W).
-        k (int): The side length of the patches.
-        stride (int): The stride of the patches.
-        padding (int): The padding of the patches.
+        x_vals_normed (Tensor): The first set of patches of shape (..., N, M1)
+        x_inv_sqrt (Tensor): The inverse square root of the covariance matrix of x_vals_normed of shape (..., M1, M1)
+        y_vals_normed (Tensor): The second set of patches of shape (..., N, M2)
+        y_inv_sqrt (Tensor): The inverse square root of the covariance matrix of y_vals_normed of shape (..., M2, M2)
 
     Returns:
-        torch.Tensor: CCA correlations (B, n_patches) where n_patches
-            depends on the image size, kernel size, stride, and padding.
-
-    Reference:
-
-    Heinrich, Mattias P., et al. "Multispectral image registration based on 
-    local canonical correlation analysis." Medical Image Computing and 
-    Computer-Assisted Intervention-MICCAI 2014: 17th International Conference, 
-    Boston, MA, USA, September 14-18, 2014, Proceedings, Part I 17. Springer 
-    International Publishing, 2014.
+        Tensor: The patch-wise CCA of shape (...)
 
     """
 
-    B, C1, _, _ = x.shape
-    _, C2, _, _ = y.shape
-
-    # Extract patches
-    x = torch.nn.functional.unfold(
-        x, kernel_size=k, stride=stride, padding=padding
-    )
-    y = torch.nn.functional.unfold(
-        y, kernel_size=k, stride=stride, padding=padding
+    # calculate the cross covariance matrix
+    cov_xy = torch.matmul(x_vals_normed.transpose(-2, -1), y_vals_normed) / (
+        x_vals_normed.shape[-2] - 1
     )
 
-    # Reshape from (B, C * k * k, N) to (B, C, k * k, N) to (B, N, k * k, C)
-    x = x.reshape((B, C1, k * k, -1)).swapdims(-1, -3)
-    y = y.reshape((B, C2, k * k, -1)).swapdims(-1, -3)
+    # compute the canonical correlation matrix
+    cov_matrices = torch.matmul(torch.matmul(x_inv_sqrt, cov_xy), y_inv_sqrt)
 
-    # Compute the CCA
-    return batched_cca(x, y)
+    # return avg eigenvalue magnitude sum by averaging over the diagonal
+    similarity = cov_matrices.diagonal(dim1=-2, dim2=-1).abs().mean(dim=-1)
+
+    return similarity
 
 
 @torch.jit.script
-def extract_patches(x: torch.Tensor,
-                    coords: torch.Tensor,
-                    radius: int
-                        ):
+def batch_cca_to_intermediates(
+    x: Tensor,
+    upper: bool = False,
+    cca_type: str = "cov",
+    std_threshold: float = 0.0001,
+    eps: float = 1e-4,
+) -> Tuple[Tensor, Tensor]:
     """
-    Extract patches centered at each coordinate specified.
+    Computes the batched CCA between two matrices of
+    shape (..., n, m1) and (..., n, m2). n is the number of
+    data points and m is the dimension of the data points.
+    The CCA is computed batch-wise on the last two dimensions.
 
     Args:
-        x (torch.Tensor): Input tensor of shape (B, C, H, W)
-        coords (torch.Tensor): Coordinates of shape (B, N, 2) in [0, 1]
-        radius (int): patch is shape (2 * radius + 1) x (2 * radius + 1)
+        x (Tensor): The first input matrix of shape (..., n, m).
+        upper (bool): Whether to return the upper triangular matrix. Defaults to False.
+        cca_type (str):The type of CCA to compute. Options are 'cov' and 'corr'. Defaults to 'cov'.
+            The 'cov' option computes the CCA using the covariance matrices. The 'corr' option
+            computes the CCA using the correlation matrices.
+        std_threshold (float, optional): A threshold on the standard deviation to prevent division
+            by zero. Defaults to 0.0001. If the standard deviation is less than this value, the
+            standard deviation is set to 1.
+        eps (float, optional): A small value to add to the covariance matrices to
+            prevent singular matrices. Defaults to 1e-4.
 
     Returns:
-        torch.Tensor: Patches of shape (B, N, C, k * k)
+        Tuple[Tensor, Tensor]: The normalized input matrices and the inverse square root of the
+            covariance matrices. The normalized input matrices are of shape (..., n, m) and the
+            inverse square root of the covariance matrices are of shape (..., m, m). If upper is
+            True, the upper triangular matrices are returned.
+
     """
-    B, C, H, W = x.shape
-    _, N, _ = coords.shape
 
-    # Create sampling grid CMIR uses align_corners=True. Consider a 1D example with 2 pixels
-    # locations at 0 and 1. When 2x upscaling new samples are at [0, 1/3, 2/3, 1] (align_corners=True).
-    # OpenCV and others use [-1/4, 1/4, 3/4, 5/4] (align_corners=False). This means pixel sizes
-    # are 1.0 / (Length - 1) so that the last pixel is at 1.0.
-    delta_y = 1.0 / (H - 1)
-    delta_x = 1.0 / (W - 1)
+    # Standardize the input matrices
+    x_norm = x - x.mean(dim=-2, keepdim=True)
 
-    rel_coords = torch.stack(torch.meshgrid(torch.linspace(-radius, radius, 2*radius + 1),
-                                            torch.linspace(-radius, radius, 2*radius + 1),
-                                            indexing='ij'), 
-                                            dim=-1).reshape(-1, 2)
-    
-    rel_coords[..., 0] *= delta_y  # Scale y-coordinates
-    rel_coords[..., 1] *= delta_x  # Scale x-coordinates
+    # if type is correlation, normalize by the standard deviation
+    if cca_type == "corr":
+        x_std = x_norm.std(dim=-2, keepdim=True)
+        x_norm = x_norm / torch.where(
+            x_std < std_threshold, torch.ones_like(x_std), x_std
+        )
 
-    # Add relative coordinates to each coordinate and then move to [-1, 1]
-    grid = coords[:, :, None, :] + rel_coords[None, None, :, :]  # (B, N, k*k, 2)
-    grid = 2.0 * grid - 1.0
+    # Compute covariance matrices
+    cov_xx = torch.matmul(x_norm.transpose(-2, -1), x_norm) / (x_norm.shape[-2] - 1)
 
-    samples = torch.nn.functional.grid_sample(x, grid, align_corners=True)
-    samples = samples.view(B, C, N, int((2*radius + 1)*(2*radius+1)))  # (B, C, N, k*k)
+    # Compute the inverse square root of cov_xx
+    inv_sqrt_xx = torch.linalg.inv(
+        torch.linalg.cholesky(
+            cov_xx + eps * torch.eye(cov_xx.shape[-1], device=x.device), upper=upper
+        )
+    )
 
-    return samples
+    # x_norm is shape (..., n, m) and inv_sqrt_xx is shape (..., m, m)
+    return x_norm, inv_sqrt_xx
 
 
 @torch.jit.script
-def patch_cca_sparse(
-    x: torch.Tensor,
-    y: torch.Tensor,
-    coordinates: torch.Tensor,
-    patch_radius: int,
-) -> torch.Tensor:
-    
-    # Extract patches
-    x = extract_patches(x, coordinates, patch_radius)
-    y = extract_patches(y, coordinates, patch_radius)
-
-    # Reshape from (B, C, N, k * k) to (B, N, k * k, C)
-    x = x.permute(0, 2, 3, 1)
-    y = y.permute(0, 2, 3, 1)
-
-    # Compute the CCA
-    return batched_cca(x, y)
-
-
-@torch.jit.script
-def patch_cca_conv(
-    x: torch.Tensor,
-    y: torch.Tensor,
-    patch_radius: int,
-) -> torch.Tensor:
+def image_cca_convolution(
+    image1: Tensor, image2: Tensor, patch_radius: int, eps: float = 1e-4
+) -> Tensor:
     """
-    Computes the patch-wise CCA between two image tensors
-    shaped (B, C, H, W). C dimension is treated as data entries
-    within each patch. This implementation is meant to dense 
-    calculations of the CCA metric via signal processing principles.
+    Densely computes the patch-wise CCA between two image tensors
+    shaped (B, C, H, W) via signal processing principles. Operations
+    between patches are combined. For larger patches, this is much
+    faster than the unfold version, and it is also more memory
+    efficient. C dimension is treated as data entries within each patch.
+
+    **Only covariance CCA is supported.**
 
     Args:
-        x (torch.Tensor): The first input images of shape (B, C, H, W).
-        y (torch.Tensor): The second input images of shape (B, C, H, W).
+        image1 (Tensor): The first image of shape (B, C, H, W).
+        image2 (Tensor): The second image of shape (B, C, H, W).
         patch_radius (int): The radius of the patches.
+        eps (float, optional): A small value to add to the covariance matrices to
+            prevent singular matrices. Defaults to 1e-4.
 
     Returns:
-        torch.Tensor: CCA correlations (B, 1, H, W)
+        Tensor: The patch-wise CCA values of shape (B, 1, H, W)
 
     Reference:
 
-    Heinrich, Mattias P., et al. "Multispectral image registration based on 
-    local canonical correlation analysis." Medical Image Computing and 
-    Computer-Assisted Intervention-MICCAI 2014: 17th International Conference, 
-    Boston, MA, USA, September 14-18, 2014, Proceedings, Part I 17. Springer 
+    Heinrich, Mattias P., et al. "Multispectral image registration based on
+    local canonical correlation analysis." Medical Image Computing and
+    Computer-Assisted Intervention-MICCAI 2014: 17th International Conference,
+    Boston, MA, USA, September 14-18, 2014, Proceedings, Part I 17. Springer
     International Publishing, 2014.
 
     """
     # get shapes
-    B, C1, H, W = x.shape
-    _, C2, _, _ = y.shape
+    B, C1, H, W = image1.shape
+    _, C2, _, _ = image2.shape
 
     # reflection pad by patch_radius
-    padding = (patch_radius, ) * 4
-    x = torch.nn.functional.pad(x, padding, mode='reflect')
-    y = torch.nn.functional.pad(y, padding, mode='reflect')
+    padding = (patch_radius, patch_radius, patch_radius, patch_radius)
+    image1 = torch.nn.functional.pad(image1, padding, mode="reflect")
+    image2 = torch.nn.functional.pad(image2, padding, mode="reflect")
 
     # xy, xx, yy are shape (B, C1*C2, H, W)
-    xy = (x[:, :, None, :, :] * y[:, None, :, :, :]).flatten(1, 2)
-    xx = (x[:, :, None, :, :] * x[:, None, :, :, :]).flatten(1, 2)
-    yy = (y[:, :, None, :, :] * y[:, None, :, :, :]).flatten(1, 2)
+    xy = (image1[:, :, None, :, :] * image2[:, None, :, :, :]).flatten(1, 2)
+    xx = (image1[:, :, None, :, :] * image1[:, None, :, :, :]).flatten(1, 2)
+    yy = (image2[:, :, None, :, :] * image2[:, None, :, :, :]).flatten(1, 2)
 
     # compute the local means of outer products
-    xx_mean = torch.nn.functional.avg_pool2d(xx, kernel_size=2*patch_radius + 1, stride=1)
-    yy_mean = torch.nn.functional.avg_pool2d(yy, kernel_size=2*patch_radius + 1, stride=1)
-    xy_mean = torch.nn.functional.avg_pool2d(xy, kernel_size=2*patch_radius + 1, stride=1)
+    xx_mean = torch.nn.functional.avg_pool2d(
+        xx, kernel_size=2 * patch_radius + 1, stride=1
+    )
+    yy_mean = torch.nn.functional.avg_pool2d(
+        yy, kernel_size=2 * patch_radius + 1, stride=1
+    )
+    xy_mean = torch.nn.functional.avg_pool2d(
+        xy, kernel_size=2 * patch_radius + 1, stride=1
+    )
 
     # compute the local mean values using pooling
-    xmean = torch.nn.functional.avg_pool2d(x, kernel_size=2*patch_radius + 1, stride=1)
-    ymean = torch.nn.functional.avg_pool2d(y, kernel_size=2*patch_radius + 1, stride=1)
+    xmean = torch.nn.functional.avg_pool2d(
+        image1, kernel_size=2 * patch_radius + 1, stride=1
+    )
+    ymean = torch.nn.functional.avg_pool2d(
+        image2, kernel_size=2 * patch_radius + 1, stride=1
+    )
 
     # computer the outer of local means using pooling
     xm_xm = (xmean[:, :, None, :, :] * xmean[:, None, :, :, :]).flatten(1, 2)
@@ -244,187 +245,20 @@ def patch_cca_conv(
     cyy = (yy_mean - ym_ym).permute(0, 2, 3, 1).reshape(-1, C2, C2)
     cxy = (xy_mean - xm_ym).permute(0, 2, 3, 1).reshape(-1, C1, C2)
 
-    cxx_inv_sqrt = torch.linalg.inv(torch.linalg.cholesky(cxx + 1e-6 * torch.eye(cxx.shape[-1], device=x.device)))
-    cyy_inv_sqrt = torch.linalg.inv(torch.linalg.cholesky(cyy + 1e-6 * torch.eye(cyy.shape[-1], device=y.device)))
+    cxx_inv_sqrt = torch.linalg.inv(
+        torch.linalg.cholesky(
+            cxx + eps * torch.eye(cxx.shape[-1], device=image1.device)
+        )
+    )
+    cyy_inv_sqrt = torch.linalg.inv(
+        torch.linalg.cholesky(
+            cyy + eps * torch.eye(cyy.shape[-1], device=image2.device),
+            upper=True,
+        )
+    )
 
-    # compute the canonical correlation matrix
+    # compute the canonical correlation matrix and similarities
     corr_matrices = torch.matmul(torch.matmul(cxx_inv_sqrt, cxy), cyy_inv_sqrt)
-
-    # return the trace over the max dimension (min rank)
-    similarity = corr_matrices.diagonal(dim1=-2, dim2=-1).abs().sum(dim=-1) / min(C1, C2)
+    similarity = corr_matrices.diagonal(dim1=-2, dim2=-1).abs().mean(dim=-1)
 
     return similarity.reshape(B, 1, H, W)
-    
-
-class PatchCCADense(torch.nn.Module):
-    """
-    Computes the patch-wise CCA between two image tensors
-    shaped (B, C, H, W). C dimension is treated as data entries
-    within each patch. This is the naive version that computes
-    each patch separately without any optimization (slow and 
-    poor memory performance).
-
-    Args:
-        patch_radii (list[int]): Half of one minus the patch side lengths. Each patch
-            is a square of size (2 * patch_radius + 1) x (2 * patch_radius + 1).
-        strides Optional[list[int]]: The strides of the patches. If None, the
-            strides are set to be 1.
-        paddings Optional[list[int]]: The paddings of the patches. If None, the
-            paddings are set to be half the patch sizes.
-
-    """
-
-    def __init__(
-        self,
-        patch_radii: list[int],
-        strides: Optional[list[int]] = None,
-        paddings: Optional[list[int]] = None,
-    ):
-        super().__init__()
-        self.patch_sizes = [2 * radius + 1 for radius in patch_radii]
-        self.strides =  [1] * len(self.patch_sizes) if strides is None else strides
-        self.paddings = [radius for radius in patch_radii] if paddings is None else paddings
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        y: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Computes the patch-wise CCA between two image tensors
-        shaped (B, C, H, W). C dimension is treated as data entries
-        within each patch.
-
-        Args:
-            x (torch.Tensor): The first image of shape (B, C, H, W).
-            y (torch.Tensor): The second image of shape (B, C, H, W).
-
-
-        Returns:
-            torch.Tensor: The patch-wise CCA of shape (B,)
-
-        """
-        # Compute the patch-wise CCA for all patches using unfold
-        cca_values = [
-            patch_cca_unfold(x, y, patch_size, stride, padding)
-            for patch_size, stride, padding in zip(
-                self.patch_sizes, self.strides, self.paddings
-            )
-        ]
-
-        # Take the list of [(B, N)] tensors and stack them to (B, N, len(patch_radii))
-        return torch.stack(cca_values, dim=-1)
-    
-
-class PatchCCAConv(torch.nn.Module):
-    """
-    Computes the patch-wise CCA between two image tensors
-    shaped (B, C, H, W). C dimension is treated as data entries
-    within each patch. This version is meant for use with 
-    only less than 50% (guessing) of the pixels in the image. 
-    Otherwise, the dense version makes more sense.
-
-    Args:
-        patch_radii (list[int]): The sizes of the patches.
-
-    """
-
-    def __init__(
-        self,
-        patch_radii: list[int],
-    ):
-        super().__init__()
-        """
-        Initializes the PatchCCA module.
-
-        Args:
-            patch_radii (list[int]): The sizes of the patches.
-        """
-        self.patch_radii = patch_radii
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        y: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Computes the patch-wise CCA between two image tensors
-        shaped (B, C, H, W). C dimension is treated as data entries
-        within each patch.
-
-        Args:
-            x (torch.Tensor): The first images of shape (B, C, H, W).
-            y (torch.Tensor): The second images of shape (B, C, H, W).
-
-        Returns:
-            torch.Tensor: The CCA mean correlations over patches of shape (B,)
-
-        """
-        # Compute the patch-wise CCA for sparse patches
-        cca_values = [
-            patch_cca_conv(x, y, patch_radius)
-            for patch_radius in self.patch_radii
-        ]
-
-        # return shape (B, 1, H, W)
-        return torch.stack(cca_values, dim=-1)
-
-
-class PatchCCASparse(torch.nn.Module):
-    """
-    Computes the patch-wise CCA between two image tensors
-    shaped (B, C, H, W). C dimension is treated as data entries
-    within each patch. This version is meant for use with 
-    only less than 50% (guessing) of the pixels in the image. 
-    Otherwise, the dense version makes more sense. One way to 
-    speed up optimization processes is to subsample the pixel
-    locations used for metric computation.
-
-    Args:
-        patch_radii (list[int]): The sizes of the patches.
-
-    """
-
-    def __init__(
-        self,
-        patch_radii: list[int],
-    ):
-        super().__init__()
-        """
-        Initializes the PatchCCA module.
-
-        Args:
-            patch_radii (list[int]): The sizes of the patches.
-        """
-        self.patch_radii = patch_radii
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        y: torch.Tensor,
-        coordinates: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Computes the patch-wise CCA between two image tensors
-        shaped (B, C, H, W). C dimension is treated as data entries
-        within each patch.
-
-        Args:
-            x (torch.Tensor): The first images of shape (B, C, H, W).
-            y (torch.Tensor): The second images of shape (B, C, H, W).
-            coordinates (torch.Tensor): The coordinates of the pixels to use
-                in the CCA computation. The coordinates must be in the range
-                [0, 1] with shape (B, N, 2) where N is the number of locations
-
-        Returns:
-            torch.Tensor: The CCA mean correlations over patches of shape (B,)
-
-        """
-        # Compute the patch-wise CCA for sparse patches
-        cca_values = [
-            patch_cca_sparse(x, y, coordinates, patch_radius)
-            for patch_radius in self.patch_radii
-        ]
-
-        # Take the list of [(B, N)] tensors and stack them to (B, N, len(patch_radii))
-        return torch.stack(cca_values, dim=-1)

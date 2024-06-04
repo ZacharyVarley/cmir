@@ -1,10 +1,4 @@
-"""Tools for filtering and transforming individual images."""
-
-
-__all__ = [
-    "levels",
-    "CLAHE"
-]
+__all__ = ["levels", "CLAHE"]
 
 
 def __dir__():
@@ -14,7 +8,7 @@ def __dir__():
 def __getattr__(name):
     _import_mapping = {
         "Levels": "levels",
-        "CLAHE": "clahe"
+        "CLAHE": "clahe",
     }
     if name in __all__:
         import importlib
